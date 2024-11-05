@@ -1,0 +1,290 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Meeting Minutes Generator</title>
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        #transcript, #mom {
+            width: 100%;
+            height: 300px;
+            margin: 10px 0;
+            padding: 20px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            overflow-y: auto;
+            line-height: 1.6;
+            background-color: #f8f9fa;
+        }
+        #mom {
+            padding: 30px;
+        }
+        .controls {
+            margin: 20px 0;
+        }
+        button {
+            padding: 10px 20px;
+            font-size: 16px;
+            cursor: pointer;
+            background-color: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            transition: background-color 0.3s;
+        }
+        button:hover {
+            background-color: #45a049;
+        }
+        .recording {
+            background-color: #ff4444;
+        }
+        .recording:hover {
+            background-color: #ff3333;
+        }
+        .status {
+            margin: 10px 0;
+            padding: 10px;
+            border-radius: 4px;
+            display: inline-block;
+            margin-left: 10px;
+        }
+        .error {
+            background-color: #ffebee;
+            color: #c62828;
+        }
+        h1, h2 {
+            color: #2c3e50;
+        }
+        #downloadMom, #generateMom {
+            background-color: #2196F3;
+            margin-top: 10px;
+            display: none;
+        }
+        #downloadMom:hover, #generateMom:hover {
+            background-color: #1976D2;
+        }
+        /* Markdown Styles */
+        #mom h1 {
+            color: #1a237e;
+            margin-bottom: 20px;
+            font-size: 24px;
+        }
+        #mom h2 {
+            color: #303f9f;
+            margin-top: 25px;
+            margin-bottom: 15px;
+            font-size: 20px;
+            border-bottom: 2px solid #e8eaf6;
+            padding-bottom: 8px;
+        }
+        #mom ul, #mom ol {
+            margin: 10px 0;
+            padding-left: 25px;
+        }
+        #mom li {
+            margin: 8px 0;
+            line-height: 1.6;
+        }
+        #mom table {
+            border-collapse: collapse;
+            width: 100%;
+            margin: 15px 0;
+        }
+        #mom th, #mom td {
+            border: 1px solid #ccc;
+            padding: 12px;
+            text-align: left;
+        }
+        #mom th {
+            background-color: #e8eaf6;
+            color: #1a237e;
+            font-weight: bold;
+        }
+        #mom tr:nth-child(even) {
+            background-color: #f8f9fa;
+        }
+        #mom tr:hover {
+            background-color: #f5f5f5;
+        }
+        #mom p {
+            margin: 10px 0;
+            line-height: 1.6;
+        }
+    </style>
+</head>
+<body>
+    <h1>Meeting Minutes Generator</h1>
+    
+    <div class="controls">
+        <button id="recordButton">Start Recording</button>
+        <button id="generateMom" style="display: none;">Generate Minutes of Meeting</button>
+        <span id="status" class="status"></span>
+    </div>
+    
+    <div>
+        <h2>Live Transcript</h2>
+        <div id="transcript"></div>
+    </div>
+    
+    <div>
+        <h2>Minutes of Meeting</h2>
+        <div id="mom"></div>
+        <button id="downloadMom" style="display: none;">Download MoM</button>
+    </div>
+
+    <script>
+        let mediaRecorder;
+        let audioContext;
+        let socket;
+        let isRecording = false;
+        let transcriptText = '';
+        let momText = '';
+        let stream;
+
+        const recordButton = document.getElementById('recordButton');
+        const generateMomButton = document.getElementById('generateMom');
+        const transcriptDiv = document.getElementById('transcript');
+        const momDiv = document.getElementById('mom');
+        const statusSpan = document.getElementById('status');
+        const downloadButton = document.getElementById('downloadMom');
+
+        async function setupAudioStream() {
+            try {
+                stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                audioContext = new AudioContext({ sampleRate: 16000 });
+                const source = audioContext.createMediaStreamSource(stream);
+                const processor = audioContext.createScriptProcessor(1024, 1, 1);
+
+                source.connect(processor);
+                processor.connect(audioContext.destination);
+
+                processor.onaudioprocess = (e) => {
+                    if (isRecording && socket && socket.readyState === WebSocket.OPEN) {
+                        const inputData = e.inputBuffer.getChannelData(0);
+                        const audioData = convertFloat32ToInt16(inputData);
+                        socket.send(audioData);
+                    }
+                };
+
+                return true;
+            } catch (error) {
+                console.error('Error accessing microphone:', error);
+                statusSpan.textContent = 'Error: Could not access microphone';
+                statusSpan.className = 'status error';
+                return false;
+            }
+        }
+
+        async function startRecording() {
+            const setupSuccess = await setupAudioStream();
+            if (!setupSuccess) return;
+
+            isRecording = true;
+            socket = new WebSocket(`ws://${window.location.host}/ws/audio`);
+            
+            socket.onmessage = (event) => {
+                const data = JSON.parse(event.data);
+                if (data.type === 'transcript') {
+                    transcriptText += data.text + ' ';
+                    transcriptDiv.textContent = transcriptText;
+                    transcriptDiv.scrollTop = transcriptDiv.scrollHeight;
+                } else if (data.type === 'mom') {
+                    momText = data.content;
+                    momDiv.innerHTML = marked.parse(momText);
+                    downloadButton.style.display = 'block';
+                }
+            };
+
+            recordButton.textContent = 'Stop Recording';
+            recordButton.classList.add('recording');
+            transcriptText = '';
+            transcriptDiv.textContent = '';
+            momDiv.textContent = '';
+            downloadButton.style.display = 'none';
+            generateMomButton.style.display = 'none';
+            statusSpan.textContent = 'Recording...';
+        }
+
+        function stopRecording() {
+            isRecording = false;
+            recordButton.textContent = 'Start Recording';
+            recordButton.classList.remove('recording');
+            statusSpan.textContent = 'Recording stopped';
+
+            if (socket) {
+                socket.close();
+            }
+
+            // Stop all audio tracks
+            if (stream) {
+                stream.getTracks().forEach(track => track.stop());
+                stream = null;
+            }
+
+            generateMomButton.style.display = 'inline-block';
+        }
+
+        function generateMoM() {
+            statusSpan.textContent = 'Generating Minutes of Meeting...';
+            
+            fetch('/generate-mom', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ transcript: transcriptText })
+            })
+            .then(response => response.json())
+            .then(data => {
+                momText = data.mom;
+                momDiv.innerHTML = marked.parse(momText);
+                downloadButton.style.display = 'block';
+                statusSpan.textContent = 'Minutes of Meeting generated';
+            })
+            .catch(error => {
+                console.error('Error generating MoM:', error);
+                statusSpan.textContent = 'Error generating Minutes of Meeting';
+                statusSpan.className = 'status error';
+            });
+        }
+
+        function convertFloat32ToInt16(float32Array) {
+            const int16Array = new Int16Array(float32Array.length);
+            for (let i = 0; i < float32Array.length; i++) {
+                const s = Math.max(-1, Math.min(1, float32Array[i]));
+                int16Array[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+            }
+            return int16Array.buffer;
+        }
+
+        recordButton.addEventListener('click', () => {
+            if (!isRecording) {
+                startRecording();
+            } else {
+                stopRecording();
+            }
+        });
+
+        generateMomButton.addEventListener('click', generateMoM);
+
+        downloadButton.addEventListener('click', () => {
+            const blob = new Blob([momText], { type: 'text/markdown' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `mom_${new Date().toISOString()}.md`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        });
+    </script>
+</body>
+</html>
