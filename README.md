@@ -99,7 +99,6 @@ Create a `.env` file with the following variables:
 ```plaintext
 DEEPGRAM_API_KEY=your_deepgram_api_key
 OPENAI_API_KEY=your_openai_api_key
-MODEL_NAME=gpt-4-turbo  # or your preferred OpenAI model
 WEBSOCKET_PORT=8000
 ```
 
